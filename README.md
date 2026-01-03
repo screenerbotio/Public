@@ -47,7 +47,7 @@ bash <(curl -fsSL https://screenerbot.io/install.sh)
 Or download and run the management script:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/screenerbotio/ScreenerBot-Public/main/screenerbot.sh -o screenerbot.sh
+curl -fsSL https://raw.githubusercontent.com/screenerbot/Public/main/screenerbot.sh -o screenerbot.sh
 chmod +x screenerbot.sh
 sudo ./screenerbot.sh
 ```
