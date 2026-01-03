@@ -482,10 +482,20 @@ get_latest_release() {
     if command -v jq &>/dev/null; then
         local success
         success=$(echo "$response" | jq -r '.success' 2>/dev/null)
+        # Trim whitespace
+        success=$(echo "$success" | tr -d '[:space:]')
+        
         if [ "$success" != "true" ]; then
             log_error "API returned error. Response:"
             echo "$response" | head -n 5 >&2
             return 1
+        fi
+    else
+        # Fallback check if jq fails or is missing
+        if ! echo "$response" | grep -q '"success":true'; then
+             log_error "API returned error (fallback check). Response:"
+             echo "$response" | head -n 5 >&2
+             return 1
         fi
     fi
     
