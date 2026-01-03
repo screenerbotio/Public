@@ -35,6 +35,33 @@
 
 set -e
 
+# Ensure we have root privileges or can acquire them
+ensure_root() {
+    if [ "$EUID" -ne 0 ]; then
+        # Check if sudo is available
+        if command -v sudo &>/dev/null; then
+            echo "This script requires root privileges."
+            echo "Please enter your password if prompted."
+            
+            # Update sudo timestamp
+            if sudo -v; then
+                # Re-run script with sudo
+                exec sudo bash "$0" "$@"
+            else
+                echo "Failed to acquire root privileges."
+                exit 1
+            fi
+        else
+            echo "Error: This script requires root privileges and sudo is not installed."
+            echo "Please run as root."
+            exit 1
+        fi
+    fi
+}
+
+# Call ensure_root immediately
+ensure_root
+
 # =============================================================================
 # Configuration & Constants
 # =============================================================================
@@ -323,6 +350,52 @@ detect_os() {
     fi
 }
 
+install_dependencies() {
+    local pkgs=("$@")
+    local pkg_manager=""
+    local install_cmd=""
+    
+    if command -v apt-get &>/dev/null; then
+        pkg_manager="apt-get"
+        install_cmd="apt-get install -y"
+        # Update package list first
+        apt-get update -qq >/dev/null 2>&1 || true
+    elif command -v dnf &>/dev/null; then
+        pkg_manager="dnf"
+        install_cmd="dnf install -y"
+    elif command -v yum &>/dev/null; then
+        pkg_manager="yum"
+        install_cmd="yum install -y"
+    elif command -v pacman &>/dev/null; then
+        pkg_manager="pacman"
+        install_cmd="pacman -S --noconfirm"
+    else
+        log_error "Unsupported package manager. Please install dependencies manually."
+        return 1
+    fi
+    
+    log_info "Using package manager: ${pkg_manager}"
+    
+    for pkg in "${pkgs[@]}"; do
+        # Map command names to package names if needed
+        local pkg_name="$pkg"
+        case "$pkg" in
+            "systemctl") pkg_name="systemd" ;;
+            # Add other mappings if necessary
+        esac
+        
+        log_info "Installing ${pkg_name}..."
+        if $install_cmd "$pkg_name" >/dev/null 2>&1; then
+            log_success "Installed ${pkg_name}"
+        else
+            log_error "Failed to install ${pkg_name}"
+            return 1
+        fi
+    done
+    
+    return 0
+}
+
 get_glibc_version() {
     if command -v ldd &>/dev/null; then
         ldd --version 2>&1 | head -1 | grep -oP '\d+\.\d+' | head -1
@@ -401,12 +474,14 @@ check_requirements() {
     
     # Check required commands
     local required_cmds=("curl" "tar" "systemctl")
+    local missing_cmds=()
+    
     for cmd in "${required_cmds[@]}"; do
         if command -v "$cmd" &>/dev/null; then
             log_success "Required command: ${BOLD}${cmd}${RESET}"
         else
-            log_error "Missing required command: ${BOLD}${cmd}${RESET}"
-            errors=$((errors + 1))
+            log_warn "Missing required command: ${BOLD}${cmd}${RESET}"
+            missing_cmds+=("$cmd")
         fi
     done
     
@@ -416,9 +491,29 @@ check_requirements() {
         if command -v "$cmd" &>/dev/null; then
             log_success "Optional command: ${BOLD}${cmd}${RESET}"
         else
-            log_info "Optional command not found: ${BOLD}${cmd}${RESET} (will use fallback)"
+            log_info "Optional command not found: ${BOLD}${cmd}${RESET} (will attempt to install)"
+            missing_cmds+=("$cmd")
         fi
     done
+    
+    # Attempt to install missing commands
+    if [ ${#missing_cmds[@]} -gt 0 ]; then
+        log_info "Attempting to install missing dependencies: ${missing_cmds[*]}"
+        if install_dependencies "${missing_cmds[@]}"; then
+            log_success "Dependencies installed successfully"
+            # Re-check errors after installation
+            errors=0
+            for cmd in "${required_cmds[@]}"; do
+                if ! command -v "$cmd" &>/dev/null; then
+                    log_error "Failed to install required command: ${BOLD}${cmd}${RESET}"
+                    errors=$((errors + 1))
+                fi
+            done
+        else
+            log_error "Failed to install dependencies automatically"
+            errors=$((errors + 1))
+        fi
+    fi
     
     echo ""
     if [ $errors -gt 0 ]; then
