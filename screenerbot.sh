@@ -184,14 +184,12 @@ progress_bar() {
     printf "] %3d%%" "$percent"
 }
 
-# Interactive menu with arrow key navigation
-# Uses pure ANSI escape codes for maximum compatibility (no tput)
+# Interactive menu with number selection
 # Usage: select_menu "option1" "option2" "option3"
 # Returns: selected index (0-based) in $MENU_RESULT
 select_menu() {
     local options=("$@")
     local count=${#options[@]}
-    local selected=0
     
     # Ensure we have a terminal for input
     if [ ! -r /dev/tty ]; then
@@ -200,129 +198,39 @@ select_menu() {
         return 1
     fi
     
-    # Save terminal settings and ensure proper restoration
-    local saved_tty_settings
-    saved_tty_settings=$(stty -g < /dev/tty 2>/dev/null) || true
-    
-    # Cleanup function
-    cleanup_menu() {
-        printf "\033[?25h"  # Show cursor
-        [ -n "$saved_tty_settings" ] && stty "$saved_tty_settings" < /dev/tty 2>/dev/null || true
-    }
-    trap cleanup_menu EXIT INT TERM
-    
-    # ANSI escape sequences (work everywhere, no tput needed)
-    local ESC=$'\033'
-    local CURSOR_UP="${ESC}[A"
-    local CLEAR_LINE="${ESC}[2K"
-    local CURSOR_HIDE="${ESC}[?25l"
-    local CURSOR_SHOW="${ESC}[?25h"
-    local REVERSE="${ESC}[7m"
-    local NORMAL="${ESC}[27m"
-    local RESET_ALL="${ESC}[0m"
-    local COLOR_CYAN="${ESC}[36m"
-    local COLOR_DIM="${ESC}[2m"
-    local COLOR_BOLD="${ESC}[1m"
-    
-    # Hide cursor
-    printf "%s" "$CURSOR_HIDE"
-    
-    # Print navigation hint
+    # Print options
     echo ""
-    printf "  %sUp/Down: Navigate  |  Enter: Select  |  Q: Quit%s\n" "$COLOR_DIM" "$RESET_ALL"
-    echo ""
-    
-    # Function to print menu
-    print_menu() {
-        local sel=$1
-        for i in "${!options[@]}"; do
-            printf "%s" "$CLEAR_LINE"
-            if [ "$i" -eq "$sel" ]; then
-                printf "  %s%s%s> %s%s\n" "$COLOR_CYAN" "$COLOR_BOLD" "$REVERSE" "${options[$i]}" "$RESET_ALL"
-            else
-                printf "    %s%s%s\n" "$COLOR_DIM" "${options[$i]}" "$RESET_ALL"
-            fi
-        done
-    }
-    
-    # Print initial menu
-    print_menu $selected
-    
-    # Flush input buffer to prevent auto-selection
-    while read -r -t 0 -n 1 2>/dev/null; do read -r -n 1 2>/dev/null; done < /dev/tty
-    
-    # Main input loop
-    while true; do
-        # Read key input from /dev/tty
-        local key=""
-        local read_result=0
-        
-        # Use a block to ensure we read from tty
-        {
-            IFS= read -rsn1 key 2>/dev/null || read_result=$?
-        } < /dev/tty
-        
-        # If read failed (no terminal or EOF), exit gracefully
-        if [ $read_result -ne 0 ]; then
-            sleep 0.1
-            continue
-        fi
-        
-        # Check for escape sequence (arrow keys start with ESC)
-        if [[ "$key" == $'\033' ]]; then
-            # Read the rest of the escape sequence
-            local rest=""
-            {
-                IFS= read -rsn2 -t 0.1 rest 2>/dev/null || true
-            } < /dev/tty
-            key="${key}${rest}"
-        fi
-        
-        # Process key
-        case "$key" in
-            $'\033[A')  # Up arrow
-                if [ $selected -gt 0 ]; then
-                    ((selected--))
-                fi
-                ;;
-            $'\033[B')  # Down arrow
-                if [ $selected -lt $((count - 1)) ]; then
-                    ((selected++))
-                fi
-                ;;
-            ''|$'\n')  # Enter key (empty or newline)
-                break
-                ;;
-            q|Q)  # Quit
-                selected=-1
-                break
-                ;;
-            k|K)  # Vim-style up
-                if [ $selected -gt 0 ]; then
-                    ((selected--))
-                fi
-                ;;
-            j|J)  # Vim-style down
-                if [ $selected -lt $((count - 1)) ]; then
-                    ((selected++))
-                fi
-                ;;
-        esac
-        
-        # Move cursor up to redraw menu (using ANSI escape)
-        printf "%s" "${ESC}[${count}A"
-        
-        # Redraw menu
-        print_menu $selected
+    for i in "${!options[@]}"; do
+        printf "  [${CYAN}%d${RESET}] %s\n" "$i" "${options[$i]}"
     done
-    
-    # Cleanup: show cursor and restore terminal
-    printf "%s" "$CURSOR_SHOW"
-    trap - EXIT INT TERM  # Remove trap
-    [ -n "$saved_tty_settings" ] && stty "$saved_tty_settings" < /dev/tty 2>/dev/null || true
-    
+    echo "  [${CYAN}Q${RESET}] Quit"
     echo ""
-    MENU_RESULT=$selected
+    
+    while true; do
+        local selection
+        printf "  Select option [0-%d]: " "$((count-1))"
+        
+        # Read input from /dev/tty
+        if ! read -r selection < /dev/tty; then
+            # If read fails (EOF), exit loop
+            MENU_RESULT=-1
+            return 1
+        fi
+        
+        # Handle Quit
+        if [[ "$selection" =~ ^[qQ]$ ]]; then
+            MENU_RESULT=-1
+            return 0
+        fi
+        
+        # Validate number
+        if [[ "$selection" =~ ^[0-9]+$ ]] && [ "$selection" -ge 0 ] && [ "$selection" -lt "$count" ]; then
+            MENU_RESULT=$selection
+            return 0
+        fi
+        
+        echo "  ${YELLOW}Invalid selection. Please try again.${RESET}"
+    done
 }
 
 print_banner() {
