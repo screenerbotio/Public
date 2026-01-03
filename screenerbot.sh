@@ -185,7 +185,7 @@ progress_bar() {
 }
 
 # Interactive menu with arrow key navigation
-# Falls back to number input if terminal doesn't support it
+# Uses pure ANSI escape codes for maximum compatibility (no tput)
 # Usage: select_menu "option1" "option2" "option3"
 # Returns: selected index (0-based) in $MENU_RESULT
 select_menu() {
@@ -193,107 +193,100 @@ select_menu() {
     local count=${#options[@]}
     local selected=0
     
-    # Check if we can use interactive mode (terminal is a tty and supports tput)
-    local use_interactive=false
-    if [ -t 0 ] && [ -t 1 ] && command -v tput &>/dev/null; then
-        # Test if tput actually works
-        if tput cuu1 &>/dev/null && tput el &>/dev/null; then
-            use_interactive=true
-        fi
-    fi
+    # ANSI escape sequences (work everywhere, no tput needed)
+    local ESC=$'\033'
+    local CURSOR_UP="${ESC}[A"
+    local CLEAR_LINE="${ESC}[2K"
+    local CURSOR_HIDE="${ESC}[?25l"
+    local CURSOR_SHOW="${ESC}[?25h"
+    local REVERSE="${ESC}[7m"
+    local NORMAL="${ESC}[27m"
+    local RESET_ALL="${ESC}[0m"
+    local COLOR_CYAN="${ESC}[36m"
+    local COLOR_DIM="${ESC}[2m"
+    local COLOR_BOLD="${ESC}[1m"
     
-    if [ "$use_interactive" = "true" ]; then
-        # Interactive mode with arrow keys
-        
-        # Save terminal settings
-        local old_stty
-        old_stty=$(stty -g 2>/dev/null) || old_stty=""
-        
-        # Hide cursor
-        tput civis 2>/dev/null || true
-        
-        # Print navigation hint
-        echo ""
-        echo -e "  ${DIM}Up/Down: Navigate  |  Enter: Select  |  Q: Quit${RESET}"
-        echo ""
-        
-        # Print initial menu
+    # Hide cursor
+    printf "%s" "$CURSOR_HIDE"
+    
+    # Print navigation hint
+    echo ""
+    printf "  %sUp/Down: Navigate  |  Enter: Select  |  Q: Quit%s\n" "$COLOR_DIM" "$RESET_ALL"
+    echo ""
+    
+    # Function to print menu
+    print_menu() {
+        local sel=$1
         for i in "${!options[@]}"; do
-            if [ $i -eq $selected ]; then
-                echo -e "  ${CYAN}${BOLD}> ${options[$i]}${RESET}"
+            printf "%s" "$CLEAR_LINE"
+            if [ "$i" -eq "$sel" ]; then
+                printf "  %s%s%s> %s%s\n" "$COLOR_CYAN" "$COLOR_BOLD" "$REVERSE" "${options[$i]}" "$RESET_ALL"
             else
-                echo -e "    ${DIM}${options[$i]}${RESET}"
+                printf "    %s%s%s\n" "$COLOR_DIM" "${options[$i]}" "$RESET_ALL"
             fi
         done
+    }
+    
+    # Print initial menu
+    print_menu $selected
+    
+    # Main input loop
+    while true; do
+        # Read key input (up to 3 chars for arrow keys)
+        local key=""
+        IFS= read -rsn1 key 2>/dev/null
         
-        while true; do
-            # Move cursor up to redraw menu
-            for ((j=0; j<count; j++)); do
-                tput cuu1 2>/dev/null || break 2
-            done
-            
-            # Redraw menu
-            for i in "${!options[@]}"; do
-                tput el 2>/dev/null || true  # Clear line
-                if [ $i -eq $selected ]; then
-                    echo -e "  ${CYAN}${BOLD}> ${options[$i]}${RESET}"
-                else
-                    echo -e "    ${DIM}${options[$i]}${RESET}"
+        # Check for escape sequence (arrow keys start with ESC)
+        if [[ "$key" == $'\033' ]]; then
+            # Read the rest of the escape sequence
+            local rest=""
+            IFS= read -rsn2 -t 0.1 rest 2>/dev/null || true
+            key="${key}${rest}"
+        fi
+        
+        # Process key
+        case "$key" in
+            $'\033[A')  # Up arrow
+                if [ $selected -gt 0 ]; then
+                    ((selected--))
                 fi
-            done
-            
-            # Read key input
-            IFS= read -rsn1 key 2>/dev/null || break
-            
-            case "$key" in
-                $'\x1b')  # Escape sequence (arrow keys)
-                    read -rsn2 -t 0.1 key 2>/dev/null || true
-                    case "$key" in
-                        '[A')  # Up arrow
-                            ((selected > 0)) && ((selected--))
-                            ;;
-                        '[B')  # Down arrow
-                            ((selected < count-1)) && ((selected++))
-                            ;;
-                    esac
-                    ;;
-                '')  # Enter key
-                    break
-                    ;;
-                q|Q)
-                    selected=-1
-                    break
-                    ;;
-            esac
-        done
+                ;;
+            $'\033[B')  # Down arrow
+                if [ $selected -lt $((count - 1)) ]; then
+                    ((selected++))
+                fi
+                ;;
+            ''|$'\n')  # Enter key (empty or newline)
+                break
+                ;;
+            q|Q)  # Quit
+                selected=-1
+                break
+                ;;
+            k|K)  # Vim-style up
+                if [ $selected -gt 0 ]; then
+                    ((selected--))
+                fi
+                ;;
+            j|J)  # Vim-style down
+                if [ $selected -lt $((count - 1)) ]; then
+                    ((selected++))
+                fi
+                ;;
+        esac
         
-        # Restore cursor
-        tput cnorm 2>/dev/null || true
+        # Move cursor up to redraw menu (using ANSI escape)
+        printf "%s" "${ESC}[${count}A"
         
-        # Restore terminal settings
-        [ -n "$old_stty" ] && stty "$old_stty" 2>/dev/null || true
-        
-        echo ""
-        MENU_RESULT=$selected
-        return
-    fi
-    
-    # Fallback: Simple number input (for non-interactive terminals)
-    echo ""
-    for i in "${!options[@]}"; do
-        echo "  [$i] ${options[$i]}"
+        # Redraw menu
+        print_menu $selected
     done
-    echo ""
-    echo -n "  Select [0-$((count-1))] or Q to quit: "
-    read -r choice
     
-    if [[ "$choice" =~ ^[0-9]+$ ]] && [ "$choice" -ge 0 ] && [ "$choice" -lt "$count" ]; then
-        MENU_RESULT=$choice
-    elif [ "$choice" = "q" ] || [ "$choice" = "Q" ]; then
-        MENU_RESULT=-1
-    else
-        MENU_RESULT=0
-    fi
+    # Show cursor
+    printf "%s" "$CURSOR_SHOW"
+    
+    echo ""
+    MENU_RESULT=$selected
 }
 
 print_banner() {
