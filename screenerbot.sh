@@ -1,18 +1,12 @@
 #!/bin/bash
 # =============================================================================
 #
-#   ███████╗ ██████╗██████╗ ███████╗███████╗███╗   ██╗███████╗██████╗
-#   ██╔════╝██╔════╝██╔══██╗██╔════╝██╔════╝████╗  ██║██╔════╝██╔══██╗
-#   ███████╗██║     ██████╔╝█████╗  █████╗  ██╔██╗ ██║█████╗  ██████╔╝
-#   ╚════██║██║     ██╔══██╗██╔══╝  ██╔══╝  ██║╚██╗██║██╔══╝  ██╔══██╗
-#   ███████║╚██████╗██║  ██║███████╗███████╗██║ ╚████║███████╗██║  ██║
-#   ╚══════╝ ╚═════╝╚═╝  ╚═╝╚══════╝╚══════╝╚═╝  ╚═══╝╚══════╝╚═╝  ╚═╝
-#                          ██████╗  ██████╗ ████████╗
-#                          ██╔══██╗██╔═══██╗╚══██╔══╝
-#                          ██████╔╝██║   ██║   ██║
-#                          ██╔══██╗██║   ██║   ██║
-#                          ██████╔╝╚██████╔╝   ██║
-#                          ╚═════╝  ╚═════╝    ╚═╝
+#   ███████╗ ██████╗██████╗ ███████╗███████╗███╗   ██╗███████╗██████╗ ██████╗  ██████╗ ████████╗
+#   ██╔════╝██╔════╝██╔══██╗██╔════╝██╔════╝████╗  ██║██╔════╝██╔══██╗██╔══██╗██╔═══██╗╚══██╔══╝
+#   ███████╗██║     ██████╔╝█████╗  █████╗  ██╔██╗ ██║█████╗  ██████╔╝██████╔╝██║   ██║   ██║
+#   ╚════██║██║     ██╔══██╗██╔══╝  ██╔══╝  ██║╚██╗██║██╔══╝  ██╔══██╗██╔══██╗██║   ██║   ██║
+#   ███████║╚██████╗██║  ██║███████╗███████╗██║ ╚████║███████╗██║  ██║██████╔╝╚██████╔╝   ██║
+#   ╚══════╝ ╚═════╝╚═╝  ╚═╝╚══════╝╚══════╝╚═╝  ╚═══╝╚══════╝╚═╝  ╚═╝╚═════╝  ╚═════╝    ╚═╝
 #
 #   ScreenerBot VPS Manager - Installation, Update & Management Tool
 #   https://screenerbot.io
@@ -153,37 +147,126 @@ log_step() {
     echo -e "${CYAN}${BOLD}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
 }
 
+# Spinner animation for long-running tasks
+spinner() {
+    local pid=$1
+    local message="${2:-Processing...}"
+    local spinchars='⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏'
+    local i=0
+    
+    tput civis  # Hide cursor
+    while kill -0 "$pid" 2>/dev/null; do
+        local char="${spinchars:$i:1}"
+        printf "\r${CYAN}%s${RESET} %s" "$char" "$message"
+        i=$(( (i + 1) % ${#spinchars} ))
+        sleep 0.08
+    done
+    printf "\r\033[K"  # Clear line
+    tput cnorm  # Show cursor
+}
+
+# Progress bar animation
+progress_bar() {
+    local current=$1
+    local total=$2
+    local width=40
+    local percent=$((current * 100 / total))
+    local filled=$((current * width / total))
+    local empty=$((width - filled))
+    
+    printf "\r  ["
+    printf "%${filled}s" '' | tr ' ' '█'
+    printf "%${empty}s" '' | tr ' ' '░'
+    printf "] %3d%%" "$percent"
+}
+
+# Interactive menu with arrow key navigation
+# Usage: select_menu "option1" "option2" "option3"
+# Returns: selected index (0-based) in $MENU_RESULT
+select_menu() {
+    local options=("$@")
+    local selected=0
+    local count=${#options[@]}
+    
+    # Hide cursor
+    tput civis
+    
+    # Print navigation hint
+    echo ""
+    echo -e "  ${DIM}↑/↓ Navigate  •  Enter Select  •  Q Quit${RESET}"
+    echo ""
+    
+    # Save cursor position
+    tput sc
+    
+    while true; do
+        # Restore cursor position
+        tput rc
+        
+        # Draw menu options
+        for i in "${!options[@]}"; do
+            if [ $i -eq $selected ]; then
+                echo -e "  ${CYAN}${BOLD}▸ ${options[$i]}${RESET}   "
+            else
+                echo -e "    ${DIM}${options[$i]}${RESET}   "
+            fi
+        done
+        
+        # Read key input
+        read -rsn1 key
+        
+        # Handle arrow keys (escape sequences)
+        if [[ $key == $'\x1b' ]]; then
+            read -rsn2 key
+            case $key in
+                '[A') # Up arrow
+                    ((selected--))
+                    [ $selected -lt 0 ] && selected=$((count - 1))
+                    ;;
+                '[B') # Down arrow
+                    ((selected++))
+                    [ $selected -ge $count ] && selected=0
+                    ;;
+            esac
+        elif [[ $key == '' ]]; then  # Enter key
+            break
+        elif [[ $key == 'q' || $key == 'Q' ]]; then
+            selected=-1
+            break
+        fi
+    done
+    
+    # Show cursor
+    tput cnorm
+    
+    MENU_RESULT=$selected
+}
+
 print_banner() {
     clear
     echo -e "${CYAN}"
     cat << 'BANNER'
-╔═══════════════════════════════════════════════════════════════════╗
-║                                                                   ║
-║   ███████╗ ██████╗██████╗ ███████╗███████╗███╗   ██╗███████╗      ║
-║   ██╔════╝██╔════╝██╔══██╗██╔════╝██╔════╝████╗  ██║██╔════╝      ║
-║   ███████╗██║     ██████╔╝█████╗  █████╗  ██╔██╗ ██║█████╗        ║
-║   ╚════██║██║     ██╔══██╗██╔══╝  ██╔══╝  ██║╚██╗██║██╔══╝        ║
-║   ███████║╚██████╗██║  ██║███████╗███████╗██║ ╚████║███████╗      ║
-║   ╚══════╝ ╚═════╝╚═╝  ╚═╝╚══════╝╚══════╝╚═╝  ╚═══╝╚══════╝      ║
-║                          ██████╗  ██████╗ ████████╗               ║
-║                          ██╔══██╗██╔═══██╗╚══██╔══╝               ║
-║                          ██████╔╝██║   ██║   ██║                  ║
-║                          ██╔══██╗██║   ██║   ██║                  ║
-║                          ██████╔╝╚██████╔╝   ██║                  ║
-║                          ╚═════╝  ╚═════╝    ╚═╝                  ║
-║                                                                   ║
-║           Automated Solana DeFi Trading Bot                       ║
-║                  VPS Management Tool v${SCRIPT_VERSION}                       ║
-║                                                                   ║
-╚═══════════════════════════════════════════════════════════════════╝
+    ╔══════════════════════════════════════════════════════════════════════════════════════════════════════════╗
+    ║                                                                                                          ║
+    ║   ███████╗ ██████╗██████╗ ███████╗███████╗███╗   ██╗███████╗██████╗ ██████╗  ██████╗ ████████╗           ║
+    ║   ██╔════╝██╔════╝██╔══██╗██╔════╝██╔════╝████╗  ██║██╔════╝██╔══██╗██╔══██╗██╔═══██╗╚══██╔══╝           ║
+    ║   ███████╗██║     ██████╔╝█████╗  █████╗  ██╔██╗ ██║█████╗  ██████╔╝██████╔╝██║   ██║   ██║              ║
+    ║   ╚════██║██║     ██╔══██╗██╔══╝  ██╔══╝  ██║╚██╗██║██╔══╝  ██╔══██╗██╔══██╗██║   ██║   ██║              ║
+    ║   ███████║╚██████╗██║  ██║███████╗███████╗██║ ╚████║███████╗██║  ██║██████╔╝╚██████╔╝   ██║              ║
+    ║   ╚══════╝ ╚═════╝╚═╝  ╚═╝╚══════╝╚══════╝╚═╝  ╚═══╝╚══════╝╚═╝  ╚═╝╚═════╝  ╚═════╝    ╚═╝              ║
+    ║                                                                                                          ║
+    ║                            Automated Solana DeFi Trading Bot                                             ║
+    ║                                  VPS Management Tool v1.0.0                                              ║
+    ║                                                                                                          ║
+    ╚══════════════════════════════════════════════════════════════════════════════════════════════════════════╝
 BANNER
     echo -e "${RESET}"
-    echo -e "${DIM}   https://screenerbot.io  •  Telegram: @screenerbotio${RESET}"
+    echo -e "${DIM}                     https://screenerbot.io  •  Telegram: @screenerbotio${RESET}"
     echo ""
 }
 
 print_separator() {
-    echo -e "${DIM}───────────────────────────────────────────────────────────────────${RESET}"
+    echo -e "${DIM}─────────────────────────────────────────────────────────────────────────────────${RESET}"
 }
 
 confirm() {
@@ -360,17 +443,28 @@ check_requirements() {
 # API Functions
 # =============================================================================
 
-# Fetch JSON from API with error handling
+# Fetch JSON from API with error handling (with spinner)
 api_fetch() {
     local endpoint="$1"
     local url="${API_BASE}${endpoint}"
     local response
+    local temp_file
+    temp_file=$(mktemp)
     
-    if ! response=$(curl -fsSL --connect-timeout 10 --max-time 30 "$url" 2>&1); then
-        log_error "Failed to fetch from API: $url"
+    # Run curl in background with spinner
+    curl -fsSL --connect-timeout 10 --max-time 30 "$url" > "$temp_file" 2>&1 &
+    local curl_pid=$!
+    spinner "$curl_pid" "Connecting to API..."
+    wait "$curl_pid"
+    local exit_code=$?
+    
+    if [ $exit_code -ne 0 ]; then
+        rm -f "$temp_file"
         return 1
     fi
     
+    response=$(cat "$temp_file")
+    rm -f "$temp_file"
     echo "$response"
 }
 
@@ -898,25 +992,22 @@ service_menu() {
         
         service_status
         
-        print_separator
-        echo ""
-        echo "  ${CYAN}[1]${RESET} ${ICON_START} Start Service"
-        echo "  ${CYAN}[2]${RESET} ${ICON_STOP} Stop Service"
-        echo "  ${CYAN}[3]${RESET} ${ICON_RESTART} Restart Service"
-        echo "  ${CYAN}[4]${RESET} ${ICON_LOGS} View Logs"
-        echo "  ${CYAN}[5]${RESET} ${GREEN}+${RESET} Enable Auto-Start"
-        echo "  ${CYAN}[6]${RESET} ${RED}-${RESET} Disable Auto-Start"
-        echo "  ${CYAN}[7]${RESET} ${ICON_SERVICE} Create/Recreate Service"
-        echo ""
-        echo "  ${DIM}[0]${RESET} ${ICON_BACK} Back to Main Menu"
-        echo ""
-        print_separator
-        echo ""
-        echo -n "  Select option: "
-        read -r choice
+        local options=(
+            "${ICON_START} Start Service"
+            "${ICON_STOP} Stop Service"
+            "${ICON_RESTART} Restart Service"
+            "${ICON_LOGS} View Logs"
+            "${GREEN}+${RESET} Enable Auto-Start"
+            "${RED}-${RESET} Disable Auto-Start"
+            "${ICON_SERVICE} Create/Recreate Service"
+            "${ICON_BACK} Back to Main Menu"
+        )
+        
+        select_menu "${options[@]}"
+        local choice=$MENU_RESULT
         
         case "$choice" in
-            1)
+            0)
                 if systemctl start "${SERVICE_NAME}" 2>/dev/null; then
                     log_success "Service started"
                 else
@@ -924,7 +1015,7 @@ service_menu() {
                 fi
                 press_enter
                 ;;
-            2)
+            1)
                 if systemctl stop "${SERVICE_NAME}" 2>/dev/null; then
                     log_success "Service stopped"
                 else
@@ -932,7 +1023,7 @@ service_menu() {
                 fi
                 press_enter
                 ;;
-            3)
+            2)
                 if systemctl restart "${SERVICE_NAME}" 2>/dev/null; then
                     log_success "Service restarted"
                 else
@@ -940,13 +1031,13 @@ service_menu() {
                 fi
                 press_enter
                 ;;
-            4)
+            3)
                 echo ""
                 log_info "Showing last 50 log lines (Ctrl+C to exit live view)..."
                 echo ""
                 journalctl -u "${SERVICE_NAME}" -n 50 -f 2>/dev/null || log_error "Failed to get logs"
                 ;;
-            5)
+            4)
                 if systemctl enable "${SERVICE_NAME}" 2>/dev/null; then
                     log_success "Auto-start enabled"
                 else
@@ -954,7 +1045,7 @@ service_menu() {
                 fi
                 press_enter
                 ;;
-            6)
+            5)
                 if systemctl disable "${SERVICE_NAME}" 2>/dev/null; then
                     log_success "Auto-start disabled"
                 else
@@ -962,16 +1053,12 @@ service_menu() {
                 fi
                 press_enter
                 ;;
-            7)
+            6)
                 create_service
                 press_enter
                 ;;
-            0|q|Q)
+            7|-1)
                 break
-                ;;
-            *)
-                log_warn "Invalid option"
-                sleep 1
                 ;;
         esac
     done
@@ -1292,29 +1379,25 @@ main_menu() {
         echo "  Service: ${service_status_text}"
         
         echo ""
-        print_separator
-        echo ""
-        echo "  ${CYAN}[1]${RESET} ${ICON_PACKAGE} Install ScreenerBot"
-        echo "  ${CYAN}[2]${RESET} ${ICON_UPDATE} Update ScreenerBot"
-        echo "  ${CYAN}[3]${RESET} ${ICON_TRASH} Uninstall ScreenerBot"
-        echo ""
-        echo "  ${CYAN}[4]${RESET} ${ICON_BACKUP} Backup Data"
-        echo "  ${CYAN}[5]${RESET} ${ICON_RESTORE} Restore Data"
-        echo ""
-        echo "  ${CYAN}[6]${RESET} ${ICON_SERVICE} Manage Service"
-        echo "  ${CYAN}[7]${RESET} ${ICON_STATUS} Status & Info"
-        echo "  ${CYAN}[8]${RESET} ${ICON_TELEGRAM} Setup Update Notifications"
-        echo "  ${CYAN}[9]${RESET} ${ICON_HELP} Help & Tips"
-        echo ""
-        echo "  ${DIM}[0]${RESET} ${ICON_EXIT} Exit"
-        echo ""
-        print_separator
-        echo ""
-        echo -n "  Select option: "
-        read -r choice
+        
+        local options=(
+            "${ICON_PACKAGE} Install ScreenerBot"
+            "${ICON_UPDATE} Update ScreenerBot"
+            "${ICON_TRASH} Uninstall ScreenerBot"
+            "${ICON_BACKUP} Backup Data"
+            "${ICON_RESTORE} Restore Data"
+            "${ICON_SERVICE} Manage Service"
+            "${ICON_STATUS} Status & Info"
+            "${ICON_TELEGRAM} Setup Update Notifications"
+            "${ICON_HELP} Help & Tips"
+            "${ICON_EXIT} Exit"
+        )
+        
+        select_menu "${options[@]}"
+        local choice=$MENU_RESULT
         
         case "$choice" in
-            1)
+            0)
                 # Install
                 if [ -n "$installed_version" ]; then
                     log_warn "ScreenerBot is already installed (v${installed_version})"
@@ -1361,7 +1444,7 @@ main_menu() {
                 fi
                 press_enter
                 ;;
-            2)
+            1)
                 # Update
                 if [ -z "$installed_version" ]; then
                     log_error "ScreenerBot is not installed"
@@ -1413,7 +1496,7 @@ main_menu() {
                 fi
                 press_enter
                 ;;
-            3)
+            2)
                 # Uninstall
                 if [ -z "$installed_version" ]; then
                     log_warn "ScreenerBot is not installed"
@@ -1428,41 +1511,37 @@ main_menu() {
                 fi
                 press_enter
                 ;;
-            4)
+            3)
                 # Backup
                 create_backup
                 press_enter
                 ;;
-            5)
+            4)
                 # Restore
                 restore_backup
                 press_enter
                 ;;
-            6)
+            5)
                 # Service menu
                 service_menu
                 ;;
-            7)
+            6)
                 # Status
                 show_status
                 ;;
-            8)
+            7)
                 # Telegram notifications
                 setup_update_notifications
                 ;;
-            9)
+            8)
                 # Help
                 show_help
                 ;;
-            0|q|Q|exit)
+            9|-1)
                 echo ""
                 log_info "Thanks for using ScreenerBot! ${ICON_ROCKET}"
                 echo ""
                 exit 0
-                ;;
-            *)
-                log_warn "Invalid option"
-                sleep 1
                 ;;
         esac
     done
