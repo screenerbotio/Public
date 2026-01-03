@@ -443,7 +443,7 @@ api_fetch() {
     temp_file=$(mktemp)
     
     # Run curl in background with spinner
-    curl -fsSL --connect-timeout 10 --max-time 30 "$url" > "$temp_file" 2>&1 &
+    curl -fsSL --connect-timeout 10 --max-time 30 "$url" > "$temp_file" &
     local curl_pid=$!
     spinner "$curl_pid" "Connecting to API..."
     wait "$curl_pid"
@@ -483,7 +483,8 @@ get_latest_release() {
         local success
         success=$(echo "$response" | jq -r '.success' 2>/dev/null)
         if [ "$success" != "true" ]; then
-            log_error "API returned error"
+            log_error "API returned error. Response:"
+            echo "$response" | head -n 5 >&2
             return 1
         fi
     fi
