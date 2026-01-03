@@ -36,8 +36,43 @@ Most Solana tools rely on delayed APIs and shared infrastructure. ScreenerBot ru
 
 ScreenerBot is available as a bundled application for macOS, Windows, and Linux.
 
+### Quick Install (Linux VPS)
+
+Install ScreenerBot on your VPS with a single command:
+
+```bash
+bash <(curl -fsSL https://screenerbot.io/install.sh)
+```
+
+Or download and run the management script:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/screenerbotio/ScreenerBot-Public/main/screenerbot.sh -o screenerbot.sh
+chmod +x screenerbot.sh
+sudo ./screenerbot.sh
+```
+
+The script provides an interactive menu for:
+- 📦 Install/Update/Uninstall ScreenerBot
+- ⚙️ Systemd service management (auto-start, restart, logs)
+- 💾 Backup and restore your data
+- 🔔 Telegram update notifications
+- 📊 Status monitoring
+
+### Desktop Applications
+
+Download pre-built applications from our website:
+
+- **macOS:** DMG installer (Apple Silicon & Intel)
+- **Windows:** EXE installer (x64 & ARM64)
+- **Linux Desktop:** DEB/RPM packages
+
+### Resources
+
 - **Website:** [screenerbot.io](https://screenerbot.io)
+- **Downloads:** [screenerbot.io/download](https://screenerbot.io/download)
 - **Documentation:** [screenerbot.io/docs](https://screenerbot.io/docs)
+- **VPS Guide:** [screenerbot.io/docs/getting-started/running](https://screenerbot.io/docs/getting-started/running)
 - **Community:** [t.me/screenerbotio](https://t.me/screenerbotio)
 
 ---
