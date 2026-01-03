@@ -95,31 +95,31 @@ else
     readonly RESET=""
 fi
 
-# Icons (using unicode for better compatibility)
-readonly ICON_CHECK="✓"
-readonly ICON_CROSS="✗"
-readonly ICON_ARROW="→"
-readonly ICON_BULLET="•"
-readonly ICON_INFO="ℹ"
-readonly ICON_WARN="⚠"
-readonly ICON_ROCKET="🚀"
-readonly ICON_PACKAGE="📦"
-readonly ICON_DOWNLOAD="⬇"
-readonly ICON_UPDATE="🔄"
-readonly ICON_TRASH="🗑"
-readonly ICON_BACKUP="💾"
-readonly ICON_RESTORE="📂"
-readonly ICON_SERVICE="⚙"
-readonly ICON_STATUS="📊"
-readonly ICON_BELL="🔔"
-readonly ICON_HELP="❓"
-readonly ICON_EXIT="🚪"
-readonly ICON_BACK="↩"
-readonly ICON_START="▶"
-readonly ICON_STOP="■"
-readonly ICON_RESTART="↻"
-readonly ICON_LOGS="📝"
-readonly ICON_TELEGRAM="📱"
+# Icons (ASCII for maximum compatibility)
+readonly ICON_CHECK="[+]"
+readonly ICON_CROSS="[x]"
+readonly ICON_ARROW="->"
+readonly ICON_BULLET="*"
+readonly ICON_INFO="[i]"
+readonly ICON_WARN="[!]"
+readonly ICON_ROCKET="*"
+readonly ICON_PACKAGE="[+]"
+readonly ICON_DOWNLOAD="[-]"
+readonly ICON_UPDATE="[~]"
+readonly ICON_TRASH="[x]"
+readonly ICON_BACKUP="[S]"
+readonly ICON_RESTORE="[R]"
+readonly ICON_SERVICE="[=]"
+readonly ICON_STATUS="[i]"
+readonly ICON_BELL="[!]"
+readonly ICON_HELP="[?]"
+readonly ICON_EXIT="[Q]"
+readonly ICON_BACK="<-"
+readonly ICON_START=">"
+readonly ICON_STOP="#"
+readonly ICON_RESTART="~"
+readonly ICON_LOGS="[L]"
+readonly ICON_TELEGRAM="[T]"
 
 # =============================================================================
 # Logging & UI Functions
@@ -151,18 +151,22 @@ log_step() {
 spinner() {
     local pid=$1
     local message="${2:-Processing...}"
-    local spinchars='⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏'
+    local spinchars='|/-\\'
     local i=0
     
-    tput civis  # Hide cursor
+    # Hide cursor if possible
+    tput civis 2>/dev/null || true
+    
     while kill -0 "$pid" 2>/dev/null; do
         local char="${spinchars:$i:1}"
         printf "\r${CYAN}%s${RESET} %s" "$char" "$message"
         i=$(( (i + 1) % ${#spinchars} ))
-        sleep 0.08
+        sleep 0.1
     done
     printf "\r\033[K"  # Clear line
-    tput cnorm  # Show cursor
+    
+    # Show cursor
+    tput cnorm 2>/dev/null || true
 }
 
 # Progress bar animation
@@ -181,65 +185,115 @@ progress_bar() {
 }
 
 # Interactive menu with arrow key navigation
+# Falls back to number input if terminal doesn't support it
 # Usage: select_menu "option1" "option2" "option3"
 # Returns: selected index (0-based) in $MENU_RESULT
 select_menu() {
     local options=("$@")
-    local selected=0
     local count=${#options[@]}
+    local selected=0
     
-    # Hide cursor
-    tput civis
+    # Check if we can use interactive mode (terminal is a tty and supports tput)
+    local use_interactive=false
+    if [ -t 0 ] && [ -t 1 ] && command -v tput &>/dev/null; then
+        # Test if tput actually works
+        if tput cuu1 &>/dev/null && tput el &>/dev/null; then
+            use_interactive=true
+        fi
+    fi
     
-    # Print navigation hint
-    echo ""
-    echo -e "  ${DIM}↑/↓ Navigate  •  Enter Select  •  Q Quit${RESET}"
-    echo ""
-    
-    # Save cursor position
-    tput sc
-    
-    while true; do
-        # Restore cursor position
-        tput rc
+    if [ "$use_interactive" = "true" ]; then
+        # Interactive mode with arrow keys
         
-        # Draw menu options
+        # Save terminal settings
+        local old_stty
+        old_stty=$(stty -g 2>/dev/null) || old_stty=""
+        
+        # Hide cursor
+        tput civis 2>/dev/null || true
+        
+        # Print navigation hint
+        echo ""
+        echo -e "  ${DIM}Up/Down: Navigate  |  Enter: Select  |  Q: Quit${RESET}"
+        echo ""
+        
+        # Print initial menu
         for i in "${!options[@]}"; do
             if [ $i -eq $selected ]; then
-                echo -e "  ${CYAN}${BOLD}▸ ${options[$i]}${RESET}   "
+                echo -e "  ${CYAN}${BOLD}> ${options[$i]}${RESET}"
             else
-                echo -e "    ${DIM}${options[$i]}${RESET}   "
+                echo -e "    ${DIM}${options[$i]}${RESET}"
             fi
         done
         
-        # Read key input
-        read -rsn1 key
-        
-        # Handle arrow keys (escape sequences)
-        if [[ $key == $'\x1b' ]]; then
-            read -rsn2 key
-            case $key in
-                '[A') # Up arrow
-                    ((selected--))
-                    [ $selected -lt 0 ] && selected=$((count - 1))
+        while true; do
+            # Move cursor up to redraw menu
+            for ((j=0; j<count; j++)); do
+                tput cuu1 2>/dev/null || break 2
+            done
+            
+            # Redraw menu
+            for i in "${!options[@]}"; do
+                tput el 2>/dev/null || true  # Clear line
+                if [ $i -eq $selected ]; then
+                    echo -e "  ${CYAN}${BOLD}> ${options[$i]}${RESET}"
+                else
+                    echo -e "    ${DIM}${options[$i]}${RESET}"
+                fi
+            done
+            
+            # Read key input
+            IFS= read -rsn1 key 2>/dev/null || break
+            
+            case "$key" in
+                $'\x1b')  # Escape sequence (arrow keys)
+                    read -rsn2 -t 0.1 key 2>/dev/null || true
+                    case "$key" in
+                        '[A')  # Up arrow
+                            ((selected > 0)) && ((selected--))
+                            ;;
+                        '[B')  # Down arrow
+                            ((selected < count-1)) && ((selected++))
+                            ;;
+                    esac
                     ;;
-                '[B') # Down arrow
-                    ((selected++))
-                    [ $selected -ge $count ] && selected=0
+                '')  # Enter key
+                    break
+                    ;;
+                q|Q)
+                    selected=-1
+                    break
                     ;;
             esac
-        elif [[ $key == '' ]]; then  # Enter key
-            break
-        elif [[ $key == 'q' || $key == 'Q' ]]; then
-            selected=-1
-            break
-        fi
+        done
+        
+        # Restore cursor
+        tput cnorm 2>/dev/null || true
+        
+        # Restore terminal settings
+        [ -n "$old_stty" ] && stty "$old_stty" 2>/dev/null || true
+        
+        echo ""
+        MENU_RESULT=$selected
+        return
+    fi
+    
+    # Fallback: Simple number input (for non-interactive terminals)
+    echo ""
+    for i in "${!options[@]}"; do
+        echo "  [$i] ${options[$i]}"
     done
+    echo ""
+    echo -n "  Select [0-$((count-1))] or Q to quit: "
+    read -r choice
     
-    # Show cursor
-    tput cnorm
-    
-    MENU_RESULT=$selected
+    if [[ "$choice" =~ ^[0-9]+$ ]] && [ "$choice" -ge 0 ] && [ "$choice" -lt "$count" ]; then
+        MENU_RESULT=$choice
+    elif [ "$choice" = "q" ] || [ "$choice" = "Q" ]; then
+        MENU_RESULT=-1
+    else
+        MENU_RESULT=0
+    fi
 }
 
 print_banner() {
