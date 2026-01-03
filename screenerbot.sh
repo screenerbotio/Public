@@ -265,7 +265,7 @@ check_requirements() {
     # Check if running as root or with sudo
     if [ "$EUID" -ne 0 ]; then
         log_warn "This script requires root privileges for installation"
-        log_info "Please run with: sudo bash screenerbot.sh"
+        log_info "Please run with: sudo screenerbot"
         echo ""
         if ! confirm "Continue anyway? (some features may not work)"; then
             exit 1
@@ -1091,7 +1091,7 @@ ExecStart=/bin/bash -c '\\
             BOT_TOKEN=\$(grep -A 20 "^\\\\[telegram\\\\]" "\$CONFIG_FILE" | grep "^bot_token" | head -1 | sed "s/.*= *\\"\\\\([^\\"]*\\\\)\\".*/\\\\1/"); \\
             CHAT_ID=\$(grep -A 20 "^\\\\[telegram\\\\]" "\$CONFIG_FILE" | grep "^chat_id" | head -1 | sed "s/.*= *\\"\\\\([^\\"]*\\\\)\\".*/\\\\1/"); \\
             if [ -n "\$BOT_TOKEN" ] && [ -n "\$CHAT_ID" ]; then \\
-                MSG="🔄 <b>ScreenerBot Update Available</b>%0A%0ACurrent: v\${CURRENT}%0ALatest: v\${LATEST}%0A%0ARun: <code>sudo screenerbot.sh</code> to update"; \\
+                MSG="🔄 <b>ScreenerBot Update Available</b>%0A%0ACurrent: v\${CURRENT}%0ALatest: v\${LATEST}%0A%0ARun: <code>sudo screenerbot</code> to update"; \\
                 curl -fsSL -X POST "https://api.telegram.org/bot\${BOT_TOKEN}/sendMessage" -d "chat_id=\${CHAT_ID}" -d "text=\${MSG}" -d "parse_mode=HTML" &>/dev/null; \\
             fi; \\
         fi; \\
