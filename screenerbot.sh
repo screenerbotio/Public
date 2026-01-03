@@ -147,24 +147,6 @@ log_step() {
     echo -e "${CYAN}${BOLD}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
 }
 
-# Setup TTY file descriptor for robust input handling (fixes curl | bash issues)
-setup_tty() {
-    if [ -t 0 ]; then
-        # Stdin is a terminal, use it
-        exec 3<&0
-    elif [ -r /dev/tty ]; then
-        # Stdin is a pipe (curl), open /dev/tty explicitly
-        exec 3< /dev/tty
-    else
-        # No terminal available
-        echo "Error: No interactive terminal found. Cannot run menu." >&2
-        exit 1
-    fi
-}
-
-# Initialize TTY
-setup_tty
-
 # Spinner animation for long-running tasks
 spinner() {
     local pid=$1
@@ -266,16 +248,23 @@ select_menu() {
     # Print initial menu
     print_menu $selected
     
+    # Flush input buffer to prevent auto-selection
+    while read -r -t 0 -n 1 2>/dev/null; do read -r -n 1 2>/dev/null; done < /dev/tty
+    
     # Main input loop
     while true; do
-        # Read key input from FD 3 (tty)
+        # Read key input from /dev/tty
         local key=""
         local read_result=0
-        IFS= read -u 3 -rsn1 key 2>/dev/null || read_result=$?
         
-        # If read failed (no terminal), exit gracefully
-        if [ $read_result -ne 0 ] && [ -z "$key" ]; then
-            sleep 0.1  # Brief pause to avoid tight loop
+        # Use a block to ensure we read from tty
+        {
+            IFS= read -rsn1 key 2>/dev/null || read_result=$?
+        } < /dev/tty
+        
+        # If read failed (no terminal or EOF), exit gracefully
+        if [ $read_result -ne 0 ]; then
+            sleep 0.1
             continue
         fi
         
@@ -283,7 +272,9 @@ select_menu() {
         if [[ "$key" == $'\033' ]]; then
             # Read the rest of the escape sequence
             local rest=""
-            IFS= read -u 3 -rsn2 -t 0.1 rest 2>/dev/null || true
+            {
+                IFS= read -rsn2 -t 0.1 rest 2>/dev/null || true
+            } < /dev/tty
             key="${key}${rest}"
         fi
         
@@ -373,7 +364,7 @@ confirm() {
     fi
     
     echo -en "${YELLOW}${ICON_WARN}${RESET} ${prompt} ${yn_prompt}: "
-    read -u 3 -r response
+    read -r response < /dev/tty
     
     if [ -z "$response" ]; then
         response="$default"
@@ -388,7 +379,7 @@ confirm() {
 press_enter() {
     echo ""
     echo -en "${DIM}Press Enter to continue...${RESET}"
-    read -u 3 -r
+    read -r < /dev/tty
 }
 
 # =============================================================================
@@ -882,7 +873,7 @@ restore_backup() {
         log_warn "No backup files found in ${user_home}"
         echo ""
         echo -n "Enter path to backup file: "
-        read -u 3 -r backup_path
+        read -r backup_path < /dev/tty
         
         if [ ! -f "$backup_path" ]; then
             log_error "File not found: $backup_path"
@@ -903,7 +894,7 @@ restore_backup() {
         done
         echo ""
         echo -n "Select backup [1-${#backups[@]}]: "
-        read -u 3 -r selection
+        read -r selection < /dev/tty
         
         if [ -z "$selection" ] || [ "$selection" -lt 1 ] || [ "$selection" -gt ${#backups[@]} ]; then
             log_error "Invalid selection"
@@ -1521,7 +1512,7 @@ main_menu() {
                     log_info "Latest version: ${BOLD}v${latest_version}${RESET}"
                     echo ""
                     echo -n "Install version [${latest_version}]: "
-                    read -u 3 -r user_version
+                    read -r user_version < /dev/tty
                     
                     if [ -z "$user_version" ]; then
                         user_version="$latest_version"
