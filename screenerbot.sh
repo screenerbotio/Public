@@ -193,6 +193,24 @@ select_menu() {
     local count=${#options[@]}
     local selected=0
     
+    # Ensure we have a terminal for input
+    if [ ! -r /dev/tty ]; then
+        echo "Error: No terminal available for interactive menu" >&2
+        MENU_RESULT=0
+        return 1
+    fi
+    
+    # Save terminal settings and ensure proper restoration
+    local saved_tty_settings
+    saved_tty_settings=$(stty -g < /dev/tty 2>/dev/null) || true
+    
+    # Cleanup function
+    cleanup_menu() {
+        printf "\033[?25h"  # Show cursor
+        [ -n "$saved_tty_settings" ] && stty "$saved_tty_settings" < /dev/tty 2>/dev/null || true
+    }
+    trap cleanup_menu EXIT INT TERM
+    
     # ANSI escape sequences (work everywhere, no tput needed)
     local ESC=$'\033'
     local CURSOR_UP="${ESC}[A"
@@ -234,7 +252,14 @@ select_menu() {
     while true; do
         # Read key input from /dev/tty (required for curl | bash compatibility)
         local key=""
-        IFS= read -rsn1 key < /dev/tty 2>/dev/null
+        local read_result=0
+        IFS= read -rsn1 key < /dev/tty 2>/dev/null || read_result=$?
+        
+        # If read failed (no terminal), exit gracefully
+        if [ $read_result -ne 0 ] && [ -z "$key" ]; then
+            sleep 0.1  # Brief pause to avoid tight loop
+            continue
+        fi
         
         # Check for escape sequence (arrow keys start with ESC)
         if [[ "$key" == $'\033' ]]; then
@@ -282,8 +307,10 @@ select_menu() {
         print_menu $selected
     done
     
-    # Show cursor
+    # Cleanup: show cursor and restore terminal
     printf "%s" "$CURSOR_SHOW"
+    trap - EXIT INT TERM  # Remove trap
+    [ -n "$saved_tty_settings" ] && stty "$saved_tty_settings" < /dev/tty 2>/dev/null || true
     
     echo ""
     MENU_RESULT=$selected
