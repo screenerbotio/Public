@@ -232,15 +232,15 @@ select_menu() {
     
     # Main input loop
     while true; do
-        # Read key input (up to 3 chars for arrow keys)
+        # Read key input from /dev/tty (required for curl | bash compatibility)
         local key=""
-        IFS= read -rsn1 key 2>/dev/null
+        IFS= read -rsn1 key < /dev/tty 2>/dev/null
         
         # Check for escape sequence (arrow keys start with ESC)
         if [[ "$key" == $'\033' ]]; then
             # Read the rest of the escape sequence
             local rest=""
-            IFS= read -rsn2 -t 0.1 rest 2>/dev/null || true
+            IFS= read -rsn2 -t 0.1 rest < /dev/tty 2>/dev/null || true
             key="${key}${rest}"
         fi
         
@@ -328,7 +328,7 @@ confirm() {
     fi
     
     echo -en "${YELLOW}${ICON_WARN}${RESET} ${prompt} ${yn_prompt}: "
-    read -r response
+    read -r response < /dev/tty
     
     if [ -z "$response" ]; then
         response="$default"
@@ -343,7 +343,7 @@ confirm() {
 press_enter() {
     echo ""
     echo -en "${DIM}Press Enter to continue...${RESET}"
-    read -r
+    read -r < /dev/tty
 }
 
 # =============================================================================
@@ -837,7 +837,7 @@ restore_backup() {
         log_warn "No backup files found in ${user_home}"
         echo ""
         echo -n "Enter path to backup file: "
-        read -r backup_path
+        read -r backup_path < /dev/tty
         
         if [ ! -f "$backup_path" ]; then
             log_error "File not found: $backup_path"
@@ -858,7 +858,7 @@ restore_backup() {
         done
         echo ""
         echo -n "Select backup [1-${#backups[@]}]: "
-        read -r selection
+        read -r selection < /dev/tty
         
         if [ -z "$selection" ] || [ "$selection" -lt 1 ] || [ "$selection" -gt ${#backups[@]} ]; then
             log_error "Invalid selection"
@@ -1476,7 +1476,7 @@ main_menu() {
                     log_info "Latest version: ${BOLD}v${latest_version}${RESET}"
                     echo ""
                     echo -n "Install version [${latest_version}]: "
-                    read -r user_version
+                    read -r user_version < /dev/tty
                     
                     if [ -z "$user_version" ]; then
                         user_version="$latest_version"
