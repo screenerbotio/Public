@@ -643,8 +643,16 @@ create_backup() {
     
     log_step "Creating Backup"
     
+    # Get the actual user's home directory (not root if using sudo)
+    local user_home
+    if [ -n "$SUDO_USER" ]; then
+        user_home=$(getent passwd "$SUDO_USER" | cut -d: -f6)
+    else
+        user_home="$HOME"
+    fi
+    
     local backup_name="screenerbot-backup-$(date +%Y%m%d-%H%M%S).tar.gz"
-    local backup_path="${HOME}/${backup_name}"
+    local backup_path="${user_home}/${backup_name}"
     
     log_info "Source: ${data_dir}"
     log_info "Backup: ${backup_path}"
@@ -654,6 +662,11 @@ create_backup() {
         local backup_size
         backup_size=$(du -h "$backup_path" | cut -f1)
         log_success "Backup created: ${BOLD}${backup_path}${RESET} (${backup_size})"
+        
+        # Fix ownership if created as root
+        if [ -n "$SUDO_USER" ]; then
+            chown "$SUDO_USER:$SUDO_USER" "$backup_path" 2>/dev/null || true
+        fi
     else
         log_error "Failed to create backup"
         return 1
@@ -665,14 +678,22 @@ create_backup() {
 restore_backup() {
     log_step "Restore Backup"
     
+    # Get the actual user's home directory (not root if using sudo)
+    local user_home
+    if [ -n "$SUDO_USER" ]; then
+        user_home=$(getent passwd "$SUDO_USER" | cut -d: -f6)
+    else
+        user_home="$HOME"
+    fi
+    
     # List available backups
     local backups=()
     while IFS= read -r -d '' file; do
         backups+=("$file")
-    done < <(find "${HOME}" -maxdepth 1 -name "screenerbot-backup-*.tar.gz" -print0 2>/dev/null | sort -rz)
+    done < <(find "${user_home}" -maxdepth 1 -name "screenerbot-backup-*.tar.gz" -print0 2>/dev/null | sort -rz)
     
     if [ ${#backups[@]} -eq 0 ]; then
-        log_warn "No backup files found in ${HOME}"
+        log_warn "No backup files found in ${user_home}"
         echo ""
         echo -n "Enter path to backup file: "
         read -r backup_path
@@ -719,7 +740,7 @@ restore_backup() {
     if [ -d "$data_dir" ]; then
         log_warn "Current data directory will be replaced"
         if confirm "Continue with restore?"; then
-            local current_backup="${HOME}/screenerbot-pre-restore-$(date +%Y%m%d-%H%M%S).tar.gz"
+            local current_backup="${user_home}/screenerbot-pre-restore-$(date +%Y%m%d-%H%M%S).tar.gz"
             log_info "Backing up current data to: $current_backup"
             tar -czf "$current_backup" -C "$(dirname "$data_dir")" "$(basename "$data_dir")"
             rm -rf "$data_dir"
@@ -1039,30 +1060,41 @@ setup_update_notifications() {
     arch=$(detect_arch)
     local platform="linux-${arch}-headless"
     
-    cat > "${UPDATE_SERVICE_FILE}" << 'EOF'
+    # Resolve home directory for the actual user (not root if using sudo)
+    local user="${SUDO_USER:-$USER}"
+    local user_home
+    if [ -n "$SUDO_USER" ]; then
+        user_home=$(getent passwd "$SUDO_USER" | cut -d: -f6)
+    else
+        user_home="$HOME"
+    fi
+    local config_path="${user_home}/.local/share/ScreenerBot/data/config.toml"
+    
+    # Use non-quoted heredoc to allow variable substitution for config path
+    cat > "${UPDATE_SERVICE_FILE}" << EOF
 [Unit]
 Description=ScreenerBot Update Checker
 After=network-online.target
 
 [Service]
 Type=oneshot
-ExecStart=/bin/bash -c '\
-    CURRENT=$(/usr/local/bin/screenerbot --version 2>/dev/null | grep -oP "\\d+\\.\\d+\\.\\d+" | head -1); \
-    if [ -z "$CURRENT" ]; then exit 0; fi; \
-    ARCH=$(uname -m | sed "s/x86_64/x64/;s/aarch64/arm64/"); \
-    RESPONSE=$(curl -fsSL "https://screenerbot.io/api/releases/check?version=${CURRENT}&platform=linux-${ARCH}-headless" 2>/dev/null); \
-    UPDATE=$(echo "$RESPONSE" | grep -o "updateAvailable.*true" | head -1); \
-    if [ -n "$UPDATE" ]; then \
-        LATEST=$(echo "$RESPONSE" | grep -oP "latestVersion\":\"\\K[^\"]+"); \
-        CONFIG_FILE="${XDG_DATA_HOME:-$HOME/.local/share}/ScreenerBot/data/config.toml"; \
-        if [ -f "$CONFIG_FILE" ]; then \
-            BOT_TOKEN=$(grep -A 20 "^\\[telegram\\]" "$CONFIG_FILE" | grep "^bot_token" | head -1 | sed "s/.*= *\"\\([^\"]*\\)\".*/\\1/"); \
-            CHAT_ID=$(grep -A 20 "^\\[telegram\\]" "$CONFIG_FILE" | grep "^chat_id" | head -1 | sed "s/.*= *\"\\([^\"]*\\)\".*/\\1/"); \
-            if [ -n "$BOT_TOKEN" ] && [ -n "$CHAT_ID" ]; then \
-                MSG="🔄 <b>ScreenerBot Update Available</b>%0A%0ACurrent: v${CURRENT}%0ALatest: v${LATEST}%0A%0ARun: <code>sudo screenerbot.sh</code> to update"; \
-                curl -fsSL -X POST "https://api.telegram.org/bot${BOT_TOKEN}/sendMessage" -d "chat_id=${CHAT_ID}" -d "text=${MSG}" -d "parse_mode=HTML" &>/dev/null; \
-            fi; \
-        fi; \
+ExecStart=/bin/bash -c '\\
+    CURRENT=\$(/usr/local/bin/screenerbot --version 2>/dev/null | grep -oP "\\\\d+\\\\.\\\\d+\\\\.\\\\d+" | head -1); \\
+    if [ -z "\$CURRENT" ]; then exit 0; fi; \\
+    ARCH=\$(uname -m | sed "s/x86_64/x64/;s/aarch64/arm64/;s/amd64/x64/"); \\
+    RESPONSE=\$(curl -fsSL "https://screenerbot.io/api/releases/check?version=\${CURRENT}&platform=linux-\${ARCH}-headless" 2>/dev/null); \\
+    UPDATE=\$(echo "\$RESPONSE" | grep -o "updateAvailable.*true" | head -1); \\
+    if [ -n "\$UPDATE" ]; then \\
+        LATEST=\$(echo "\$RESPONSE" | grep -oP "latestVersion\\":\\"\\\\K[^\\"]+"); \\
+        CONFIG_FILE="${config_path}"; \\
+        if [ -f "\$CONFIG_FILE" ]; then \\
+            BOT_TOKEN=\$(grep -A 20 "^\\\\[telegram\\\\]" "\$CONFIG_FILE" | grep "^bot_token" | head -1 | sed "s/.*= *\\"\\\\([^\\"]*\\\\)\\".*/\\\\1/"); \\
+            CHAT_ID=\$(grep -A 20 "^\\\\[telegram\\\\]" "\$CONFIG_FILE" | grep "^chat_id" | head -1 | sed "s/.*= *\\"\\\\([^\\"]*\\\\)\\".*/\\\\1/"); \\
+            if [ -n "\$BOT_TOKEN" ] && [ -n "\$CHAT_ID" ]; then \\
+                MSG="🔄 <b>ScreenerBot Update Available</b>%0A%0ACurrent: v\${CURRENT}%0ALatest: v\${LATEST}%0A%0ARun: <code>sudo screenerbot.sh</code> to update"; \\
+                curl -fsSL -X POST "https://api.telegram.org/bot\${BOT_TOKEN}/sendMessage" -d "chat_id=\${CHAT_ID}" -d "text=\${MSG}" -d "parse_mode=HTML" &>/dev/null; \\
+            fi; \\
+        fi; \\
     fi'
 EOF
 
