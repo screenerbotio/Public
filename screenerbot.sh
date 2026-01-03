@@ -155,7 +155,7 @@ spinner() {
     local i=0
     
     # Hide cursor if possible
-    tput civis 2>/dev/null || true
+    tput civis >&2 2>/dev/null || true
     
     while kill -0 "$pid" 2>/dev/null; do
         local char="${spinchars:$i:1}"
@@ -166,7 +166,7 @@ spinner() {
     printf "\r\033[K" >&2  # Clear line
     
     # Show cursor
-    tput cnorm 2>/dev/null || true
+    tput cnorm >&2 2>/dev/null || true
 }
 
 # Progress bar animation
