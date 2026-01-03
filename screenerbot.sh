@@ -159,11 +159,11 @@ spinner() {
     
     while kill -0 "$pid" 2>/dev/null; do
         local char="${spinchars:$i:1}"
-        printf "\r${CYAN}%s${RESET} %s" "$char" "$message"
+        printf "\r${CYAN}%s${RESET} %s" "$char" "$message" >&2
         i=$(( (i + 1) % ${#spinchars} ))
         sleep 0.1
     done
-    printf "\r\033[K"  # Clear line
+    printf "\r\033[K" >&2  # Clear line
     
     # Show cursor
     tput cnorm 2>/dev/null || true
@@ -178,10 +178,10 @@ progress_bar() {
     local filled=$((current * width / total))
     local empty=$((width - filled))
     
-    printf "\r  ["
-    printf "%${filled}s" '' | tr ' ' '█'
-    printf "%${empty}s" '' | tr ' ' '░'
-    printf "] %3d%%" "$percent"
+    printf "\r  [" >&2
+    printf "%${filled}s" '' | tr ' ' '█' >&2
+    printf "%${empty}s" '' | tr ' ' '░' >&2
+    printf "] %3d%%" "$percent" >&2
 }
 
 # Interactive menu with number selection
