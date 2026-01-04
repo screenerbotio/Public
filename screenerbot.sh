@@ -2408,30 +2408,29 @@ show_help() {
 # Quick stats for main menu (non-blocking)
 get_quick_cpu() {
     if [ -f /proc/stat ]; then
-        # Use cached value if available (updated every few seconds)
-        if [ -f /tmp/.screenerbot_cpu ]; then
-            local age
-            age=$(( $(date +%s) - $(stat -c %Y /tmp/.screenerbot_cpu 2>/dev/null || echo 0) ))
-            if [ "$age" -lt 5 ]; then
-                cat /tmp/.screenerbot_cpu
-                return
+        local user nice sys idle iow irq sirq
+        read -r _ user nice sys idle iow irq sirq _ < /proc/stat
+        local total=$((user + nice + sys + idle + iow + irq + sirq))
+        
+        if [ -f /tmp/.screenerbot_cpu_stat ]; then
+            local prev_total prev_idle
+            read -r prev_total prev_idle < /tmp/.screenerbot_cpu_stat
+            
+            local diff_total=$((total - prev_total))
+            local diff_idle=$((idle - prev_idle))
+            
+            if [ "$diff_total" -gt 0 ]; then
+                local cpu=$((100 * (diff_total - diff_idle) / diff_total))
+                echo "$cpu"
+            else
+                echo "0"
             fi
-        fi
-        # Quick sample
-        local idle1 total1 idle2 total2
-        read -r _ user1 nice1 sys1 idle1 iow1 irq1 sirq1 _ < /proc/stat
-        total1=$((user1 + nice1 + sys1 + idle1 + iow1 + irq1 + sirq1))
-        sleep 0.2
-        read -r _ user2 nice2 sys2 idle2 iow2 irq2 sirq2 _ < /proc/stat
-        total2=$((user2 + nice2 + sys2 + idle2 + iow2 + irq2 + sirq2))
-        local diff_idle=$((idle2 - idle1))
-        local diff_total=$((total2 - total1))
-        if [ "$diff_total" -gt 0 ]; then
-            local cpu=$((100 * (diff_total - diff_idle) / diff_total))
-            echo "$cpu" | tee /tmp/.screenerbot_cpu
         else
+            # First run, return 0 and establish baseline
             echo "0"
         fi
+        
+        echo "$total $idle" > /tmp/.screenerbot_cpu_stat
     else
         echo "N/A"
     fi
@@ -2518,132 +2517,182 @@ draw_modern_bar() {
     printf "${RESET} %3d%%" "$percent"
 }
 
+print_dashboard_status() {
+    # Option C Status - Clean Horizontal Bars
+    echo -e "  ${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
+    echo ""
+    echo -e "  ${BOLD}SYSTEM${RESET}                                 ${BOLD}SCREENERBOT${RESET}"
+    echo ""
+    
+    # Get system stats (fast)
+    local cpu_pct mem_info disk_info load_avg uptime_info
+    cpu_pct=$(get_quick_cpu)
+    mem_info=$(get_quick_memory)
+    disk_info=$(get_quick_disk)
+    load_avg=$(get_quick_load)
+    uptime_info=$(get_quick_uptime)
+    
+    local mem_pct disk_pct
+    mem_pct=$(echo "$mem_info" | cut -d'|' -f1)
+    disk_pct=$(echo "$disk_info" | cut -d'|' -f1)
+    
+    # Get bot status (fast - cache systemctl result)
+    local installed_version service_status_text service_pid bot_mem
+    local service_running=false
+    installed_version=$(get_installed_version)
+    
+    if systemctl is-active --quiet "${SERVICE_NAME}" 2>/dev/null; then
+        service_running=true
+        service_status_text="${GREEN}● RUNNING${RESET}"
+        service_pid=$(systemctl show -p MainPID "${SERVICE_NAME}" 2>/dev/null | cut -d= -f2)
+        if [ -n "$service_pid" ] && [ "$service_pid" != "0" ]; then
+            bot_mem=$(ps -o rss= -p "$service_pid" 2>/dev/null | awk '{printf "%.0f", $1/1024}')
+        fi
+    elif systemctl list-unit-files 2>/dev/null | grep -q "${SERVICE_NAME}"; then
+        service_status_text="${YELLOW}○ STOPPED${RESET}"
+    else
+        service_status_text="${DIM}○ NOT INSTALLED${RESET}"
+    fi
+    
+    # CPU | Status
+    printf "  CPU    "
+    draw_modern_bar "$cpu_pct" 12
+    printf "             Status   %b\n" "$service_status_text"
+    
+    # Memory | Version
+    printf "  Memory "
+    draw_modern_bar "$mem_pct" 12
+    if [ -n "$installed_version" ]; then
+        printf "             Version  ${GREEN}v%s${RESET}\n" "$installed_version"
+    else
+        printf "             Version  ${DIM}---${RESET}\n"
+    fi
+    
+    # Disk | PID
+    printf "  Disk   "
+    draw_modern_bar "$disk_pct" 12
+    if [ -n "$service_pid" ] && [ "$service_pid" != "0" ]; then
+        printf "             PID      %s (%sMB)\n" "$service_pid" "$bot_mem"
+    else
+        printf "             PID      ${DIM}---${RESET}\n"
+    fi
+    
+    # Load | Wallet (get bot stats only if running)
+    local wallet_sol positions_count trader_status
+    if [ "$service_running" = true ]; then
+        local bot_stats
+        bot_stats=$(get_bot_quick_stats)
+        if [ -n "$bot_stats" ]; then
+            wallet_sol=$(json_get "$bot_stats" "sol_balance")
+            positions_count=$(json_get "$bot_stats" "open_positions")
+            trader_status=$(json_get "$bot_stats" "trading_enabled")
+        fi
+    fi
+    
+    printf "  Load   %-22s" "$load_avg"
+    if [ -n "$wallet_sol" ]; then
+        printf "             Wallet   ${GREEN}◆ %.4f SOL${RESET}\n" "$wallet_sol"
+    else
+        printf "             Wallet   ${DIM}---${RESET}\n"
+    fi
+    
+    # Uptime | Trading
+    printf "  Uptime %-22s" "$uptime_info"
+    if [ -n "$positions_count" ]; then
+        if [ "$trader_status" = "true" ]; then
+            printf "             Trading  ${GREEN}▲ ON${RESET} (%s pos)\n" "$positions_count"
+        else
+            printf "             Trading  ${YELLOW}▼ OFF${RESET} (%s pos)\n" "$positions_count"
+        fi
+    else
+        printf "             Trading  ${DIM}---${RESET}\n"
+    fi
+    
+    echo ""
+    echo -e "  ${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
+    echo ""
+}
+
 main_menu() {
     while true; do
-        clear
+        local choice=-1
+        local input_buffer=""
+        local installed_version
         
-        # Use single banner function
-        print_banner
-        
-        # Option C Status - Clean Horizontal Bars
-        echo -e "  ${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
-        echo ""
-        echo -e "  ${BOLD}SYSTEM${RESET}                                 ${BOLD}SCREENERBOT${RESET}"
-        echo ""
-        
-        # Get system stats (fast)
-        local cpu_pct mem_info disk_info load_avg uptime_info
-        cpu_pct=$(get_quick_cpu)
-        mem_info=$(get_quick_memory)
-        disk_info=$(get_quick_disk)
-        load_avg=$(get_quick_load)
-        uptime_info=$(get_quick_uptime)
-        
-        local mem_pct disk_pct
-        mem_pct=$(echo "$mem_info" | cut -d'|' -f1)
-        disk_pct=$(echo "$disk_info" | cut -d'|' -f1)
-        
-        # Get bot status (fast - cache systemctl result)
-        local installed_version service_status_text service_pid bot_mem
-        local service_running=false
-        installed_version=$(get_installed_version)
-        
-        if systemctl is-active --quiet "${SERVICE_NAME}" 2>/dev/null; then
-            service_running=true
-            service_status_text="${GREEN}● RUNNING${RESET}"
-            service_pid=$(systemctl show -p MainPID "${SERVICE_NAME}" 2>/dev/null | cut -d= -f2)
-            if [ -n "$service_pid" ] && [ "$service_pid" != "0" ]; then
-                bot_mem=$(ps -o rss= -p "$service_pid" 2>/dev/null | awk '{printf "%.0f", $1/1024}')
-            fi
-        elif systemctl list-unit-files 2>/dev/null | grep -q "${SERVICE_NAME}"; then
-            service_status_text="${YELLOW}○ STOPPED${RESET}"
-        else
-            service_status_text="${DIM}○ NOT INSTALLED${RESET}"
-        fi
-        
-        # CPU | Status
-        printf "  CPU    "
-        draw_modern_bar "$cpu_pct" 12
-        printf "             Status   %b\n" "$service_status_text"
-        
-        # Memory | Version
-        printf "  Memory "
-        draw_modern_bar "$mem_pct" 12
-        if [ -n "$installed_version" ]; then
-            printf "             Version  ${GREEN}v%s${RESET}\n" "$installed_version"
-        else
-            printf "             Version  ${DIM}---${RESET}\n"
-        fi
-        
-        # Disk | PID
-        printf "  Disk   "
-        draw_modern_bar "$disk_pct" 12
-        if [ -n "$service_pid" ] && [ "$service_pid" != "0" ]; then
-            printf "             PID      %s (%sMB)\n" "$service_pid" "$bot_mem"
-        else
-            printf "             PID      ${DIM}---${RESET}\n"
-        fi
-        
-        # Load | Wallet (get bot stats only if running)
-        local wallet_sol positions_count trader_status
-        if [ "$service_running" = true ]; then
-            local bot_stats
-            bot_stats=$(get_bot_quick_stats)
-            if [ -n "$bot_stats" ]; then
-                wallet_sol=$(json_get "$bot_stats" "sol_balance")
-                positions_count=$(json_get "$bot_stats" "open_positions")
-                trader_status=$(json_get "$bot_stats" "trading_enabled")
-            fi
-        fi
-        
-        printf "  Load   %-22s" "$load_avg"
-        if [ -n "$wallet_sol" ]; then
-            printf "             Wallet   ${GREEN}◆ %.4f SOL${RESET}\n" "$wallet_sol"
-        else
-            printf "             Wallet   ${DIM}---${RESET}\n"
-        fi
-        
-        # Uptime | Trading
-        printf "  Uptime %-22s" "$uptime_info"
-        if [ -n "$positions_count" ]; then
-            if [ "$trader_status" = "true" ]; then
-                printf "             Trading  ${GREEN}▲ ON${RESET} (%s pos)\n" "$positions_count"
+        # Inner loop: Live Dashboard & Input
+        while true; do
+            clear
+            print_banner
+            print_dashboard_status
+            
+            # Build menu options based on installation state
+            installed_version=$(get_installed_version)
+            local options=()
+            if [ -z "$installed_version" ]; then
+                options+=("${ICON_PACKAGE} Install ScreenerBot")
             else
-                printf "             Trading  ${YELLOW}▼ OFF${RESET} (%s pos)\n" "$positions_count"
+                options+=("${ICON_PACKAGE} Reinstall ScreenerBot")
             fi
-        else
-            printf "             Trading  ${DIM}---${RESET}\n"
-        fi
+            options+=(
+                "${ICON_UPDATE} Update ScreenerBot"
+                "${ICON_TRASH} Uninstall ScreenerBot"
+                "${ICON_BACKUP} Backup Data"
+                "${ICON_RESTORE} Restore Data"
+                "${ICON_SERVICE} Manage Service"
+                "${ICON_MONITOR} System Monitor"
+                "${ICON_LOCK} Dashboard Security"
+                "${ICON_STATUS} Status & Info"
+                "${ICON_CHECK} System Check"
+                "${ICON_TELEGRAM} Setup Update Notifications"
+                "${ICON_UPDATE} Update Management Script"
+                "${ICON_HELP} Help & Tips"
+                "${ICON_EXIT} Exit"
+            )
+            
+            # Print options
+            for i in "${!options[@]}"; do
+                printf "  [${CYAN}%d${RESET}] %s\n" "$((i + 1))" "${options[$i]}"
+            done
+            echo "  [${CYAN}Q${RESET}] Quit"
+            echo ""
+            
+            # Prompt
+            printf "  Select option [1-%d]: %s" "${#options[@]}" "$input_buffer"
+            
+            # Read input with timeout
+            local key
+            read -rsn1 -t 1 key < /dev/tty
+            local exit_code=$?
+            
+            if [ $exit_code -gt 128 ]; then
+                # Timeout - loop to refresh
+                continue
+            fi
+            
+            if [[ "$key" == "" ]]; then
+                # Enter pressed
+                if [[ -n "$input_buffer" ]]; then
+                    if [[ "$input_buffer" =~ ^[0-9]+$ ]]; then
+                        local val=$((input_buffer))
+                        if [ "$val" -ge 1 ] && [ "$val" -le "${#options[@]}" ]; then
+                            choice=$((val - 1))
+                            break # Break inner loop to execute action
+                        fi
+                    fi
+                    # Invalid input, clear buffer
+                    input_buffer=""
+                fi
+            elif [[ "$key" =~ [qQ] ]]; then
+                exit 0
+            elif [[ "$key" =~ [0-9] ]]; then
+                input_buffer="${input_buffer}${key}"
+            elif [[ "$key" == $'\x7f' || "$key" == $'\08' ]]; then # Backspace
+                input_buffer="${input_buffer%?}"
+            fi
+        done
         
-        echo ""
-        echo -e "  ${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
-        echo ""
-        
-        # Build menu options based on installation state
-        local options=()
-        if [ -z "$installed_version" ]; then
-            options+=("${ICON_PACKAGE} Install ScreenerBot")
-        else
-            options+=("${ICON_PACKAGE} Reinstall ScreenerBot")
-        fi
-        options+=(
-            "${ICON_UPDATE} Update ScreenerBot"
-            "${ICON_TRASH} Uninstall ScreenerBot"
-            "${ICON_BACKUP} Backup Data"
-            "${ICON_RESTORE} Restore Data"
-            "${ICON_SERVICE} Manage Service"
-            "${ICON_MONITOR} System Monitor"
-            "${ICON_LOCK} Dashboard Security"
-            "${ICON_STATUS} Status & Info"
-            "${ICON_CHECK} System Check"
-            "${ICON_TELEGRAM} Setup Update Notifications"
-            "${ICON_UPDATE} Update Management Script"
-            "${ICON_HELP} Help & Tips"
-            "${ICON_EXIT} Exit"
-        )
-        
-        select_menu "${options[@]}"
-        local choice=$MENU_RESULT
+        # Re-fetch version for case context
+        installed_version=$(get_installed_version)
         
         case "$choice" in
             0)
