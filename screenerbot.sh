@@ -842,21 +842,45 @@ create_backup() {
         user_home="$HOME"
     fi
     
+    # Show what will be backed up
+    local data_size
+    data_size=$(du -sh "$data_dir" 2>/dev/null | cut -f1)
+    local file_count
+    file_count=$(find "$data_dir" -type f 2>/dev/null | wc -l | tr -d ' ')
+    
+    echo ""
+    echo "  ${BOLD}Source Data:${RESET}"
+    echo "    Directory: ${data_dir}"
+    echo "    Size: ${data_size}"
+    echo "    Files: ${file_count}"
+    echo ""
+    
     local backup_name="screenerbot-backup-$(date +%Y%m%d-%H%M%S).tar.gz"
     local backup_path="${user_home}/${backup_name}"
     
-    log_info "Source: ${data_dir}"
-    log_info "Backup: ${backup_path}"
+    log_info "Creating backup: ${backup_name}"
     
-    # Create backup
+    # Create backup with progress indicator
     if tar -czf "$backup_path" -C "$(dirname "$data_dir")" "$(basename "$data_dir")"; then
         local backup_size
         backup_size=$(du -h "$backup_path" | cut -f1)
-        log_success "Backup created: ${BOLD}${backup_path}${RESET} (${backup_size})"
         
-        # Fix ownership if created as root
-        if [ -n "$SUDO_USER" ]; then
-            chown "$SUDO_USER:$SUDO_USER" "$backup_path" 2>/dev/null || true
+        # Verify the backup
+        if tar -tzf "$backup_path" >/dev/null 2>&1; then
+            log_success "Backup created and verified!"
+            echo ""
+            echo "  ${BOLD}Backup Details:${RESET}"
+            echo "    File: ${backup_path}"
+            echo "    Size: ${backup_size}"
+            echo ""
+            
+            # Fix ownership if created as root
+            if [ -n "$SUDO_USER" ]; then
+                chown "$SUDO_USER:$SUDO_USER" "$backup_path" 2>/dev/null || true
+            fi
+        else
+            log_error "Backup created but verification failed!"
+            return 1
         fi
     else
         log_error "Failed to create backup"
@@ -877,11 +901,13 @@ restore_backup() {
         user_home="$HOME"
     fi
     
-    # List available backups
+    # List available backups (include pre-restore backups too)
     local backups=()
     while IFS= read -r -d '' file; do
         backups+=("$file")
-    done < <(find "${user_home}" -maxdepth 1 -name "screenerbot-backup-*.tar.gz" -print0 2>/dev/null | sort -rz)
+    done < <(find "${user_home}" -maxdepth 1 \( -name "screenerbot-backup-*.tar.gz" -o -name "screenerbot-pre-restore-*.tar.gz" \) -print0 2>/dev/null | sort -rz)
+    
+    local backup_path=""
     
     if [ ${#backups[@]} -eq 0 ]; then
         log_warn "No backup files found in ${user_home}"
@@ -909,7 +935,19 @@ restore_backup() {
             size=$(du -h "$backup" | cut -f1)
             local name
             name=$(basename "$backup")
-            echo "  ${CYAN}[$i]${RESET} $name ${DIM}($size)${RESET}"
+            # Extract date from filename for better display
+            local date_part=""
+            if [[ "$name" =~ ([0-9]{8})-([0-9]{6}) ]]; then
+                local d="${BASH_REMATCH[1]}"
+                local t="${BASH_REMATCH[2]}"
+                date_part="${d:0:4}-${d:4:2}-${d:6:2} ${t:0:2}:${t:2:2}"
+            fi
+            # Mark pre-restore backups
+            local label=""
+            if [[ "$name" == *"pre-restore"* ]]; then
+                label=" ${YELLOW}(pre-restore)${RESET}"
+            fi
+            echo "  ${CYAN}[$i]${RESET} $name ${DIM}($size, $date_part)${RESET}${label}"
             ((i++))
         done
         echo "  ${CYAN}[Q]${RESET} Cancel"
@@ -932,11 +970,32 @@ restore_backup() {
         backup_path="${backups[$((selection-1))]}"
     fi
     
+    # Verify backup integrity
+    log_info "Verifying backup integrity..."
+    if ! tar -tzf "$backup_path" >/dev/null 2>&1; then
+        log_error "Backup file is corrupted or invalid"
+        return 1
+    fi
+    
+    # Show backup summary
+    local file_count
+    file_count=$(tar -tzf "$backup_path" 2>/dev/null | wc -l | tr -d ' ')
+    local backup_size
+    backup_size=$(du -h "$backup_path" | cut -f1)
+    echo ""
+    echo "  ${BOLD}Backup Summary:${RESET}"
+    echo "    File: $(basename "$backup_path")"
+    echo "    Size: ${backup_size}"
+    echo "    Files: ${file_count} entries"
+    echo ""
+    
     local data_dir
     data_dir=$(get_data_dir)
     
-    # Stop service if running
+    # Check if service was running
+    local service_was_running=false
     if systemctl is-active --quiet "${SERVICE_NAME}" 2>/dev/null; then
+        service_was_running=true
         log_info "Stopping service before restore..."
         systemctl stop "${SERVICE_NAME}"
     fi
@@ -946,21 +1005,59 @@ restore_backup() {
         log_warn "Current data directory will be replaced"
         if confirm "Continue with restore?"; then
             local current_backup="${user_home}/screenerbot-pre-restore-$(date +%Y%m%d-%H%M%S).tar.gz"
-            log_info "Backing up current data to: $current_backup"
-            tar -czf "$current_backup" -C "$(dirname "$data_dir")" "$(basename "$data_dir")"
+            log_info "Backing up current data to: $(basename "$current_backup")"
+            if tar -czf "$current_backup" -C "$(dirname "$data_dir")" "$(basename "$data_dir")"; then
+                # Fix ownership if created as root
+                if [ -n "$SUDO_USER" ]; then
+                    chown "$SUDO_USER:$SUDO_USER" "$current_backup" 2>/dev/null || true
+                fi
+                log_success "Current data backed up"
+            else
+                log_error "Failed to backup current data"
+                return 1
+            fi
             rm -rf "$data_dir"
         else
             log_info "Restore cancelled"
-            return 1
+            # Restart service if it was running
+            if [ "$service_was_running" = true ]; then
+                systemctl start "${SERVICE_NAME}" 2>/dev/null || true
+            fi
+            return 0
+        fi
+    else
+        if ! confirm "Restore backup to ${data_dir}?"; then
+            log_info "Restore cancelled"
+            return 0
         fi
     fi
     
     # Restore
-    log_info "Restoring from: $backup_path"
+    log_info "Restoring from backup..."
     mkdir -p "$(dirname "$data_dir")"
     
     if tar -xzf "$backup_path" -C "$(dirname "$data_dir")"; then
         log_success "Backup restored successfully!"
+        echo ""
+        
+        # Offer to restart service
+        if systemctl is-enabled --quiet "${SERVICE_NAME}" 2>/dev/null; then
+            if confirm "Start ScreenerBot service now?"; then
+                if systemctl start "${SERVICE_NAME}"; then
+                    log_success "Service started"
+                else
+                    log_error "Failed to start service"
+                fi
+            fi
+        elif [ "$service_was_running" = true ]; then
+            if confirm "Service was running before. Start it now?"; then
+                if systemctl start "${SERVICE_NAME}"; then
+                    log_success "Service started"
+                else
+                    log_error "Failed to start service"
+                fi
+            fi
+        fi
     else
         log_error "Failed to restore backup"
         return 1
