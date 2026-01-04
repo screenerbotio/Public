@@ -886,8 +886,14 @@ restore_backup() {
     if [ ${#backups[@]} -eq 0 ]; then
         log_warn "No backup files found in ${user_home}"
         echo ""
-        echo -n "Enter path to backup file: "
+        echo -n "Enter path to backup file (or Q to cancel): "
         read -r backup_path < /dev/tty
+        
+        # Handle quit/cancel
+        if [[ "$backup_path" =~ ^[qQcC]$ ]] || [ -z "$backup_path" ]; then
+            log_info "Restore cancelled"
+            return 0
+        fi
         
         if [ ! -f "$backup_path" ]; then
             log_error "File not found: $backup_path"
@@ -906,11 +912,19 @@ restore_backup() {
             echo "  ${CYAN}[$i]${RESET} $name ${DIM}($size)${RESET}"
             ((i++))
         done
+        echo "  ${CYAN}[Q]${RESET} Cancel"
         echo ""
-        echo -n "Select backup [1-${#backups[@]}]: "
+        echo -n "Select backup [1-${#backups[@]}] or Q to cancel: "
         read -r selection < /dev/tty
         
-        if [ -z "$selection" ] || [ "$selection" -lt 1 ] || [ "$selection" -gt ${#backups[@]} ]; then
+        # Handle quit/cancel
+        if [[ "$selection" =~ ^[qQcC]$ ]] || [ -z "$selection" ]; then
+            log_info "Restore cancelled"
+            return 0
+        fi
+        
+        # Validate number
+        if ! [[ "$selection" =~ ^[0-9]+$ ]] || [ "$selection" -lt 1 ] || [ "$selection" -gt ${#backups[@]} ]; then
             log_error "Invalid selection"
             return 1
         fi
@@ -1525,8 +1539,15 @@ main_menu() {
                     echo ""
                     log_info "Latest version: ${BOLD}v${latest_version}${RESET}"
                     echo ""
-                    echo -n "Install version [${latest_version}]: "
+                    echo -n "Install version [${latest_version}] or Q to cancel: "
                     read -r user_version < /dev/tty
+                    
+                    # Handle quit/cancel
+                    if [[ "$user_version" =~ ^[qQcC]$ ]]; then
+                        log_info "Installation cancelled"
+                        press_enter
+                        continue
+                    fi
                     
                     if [ -z "$user_version" ]; then
                         user_version="$latest_version"
