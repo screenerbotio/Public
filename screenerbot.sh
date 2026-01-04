@@ -1491,8 +1491,14 @@ main_menu() {
         
         echo ""
         
-        local options=(
-            "${ICON_PACKAGE} Install ScreenerBot"
+        # Build menu options based on installation state
+        local options=()
+        if [ -z "$installed_version" ]; then
+            options+=("${ICON_PACKAGE} Install ScreenerBot")
+        else
+            options+=("${ICON_PACKAGE} Reinstall ScreenerBot")
+        fi
+        options+=(
             "${ICON_UPDATE} Update ScreenerBot"
             "${ICON_TRASH} Uninstall ScreenerBot"
             "${ICON_BACKUP} Backup Data"
@@ -1509,10 +1515,10 @@ main_menu() {
         
         case "$choice" in
             0)
-                # Install
+                # Install/Reinstall
                 if [ -n "$installed_version" ]; then
                     log_warn "ScreenerBot is already installed (v${installed_version})"
-                    if ! confirm "Reinstall?"; then
+                    if ! confirm "Reinstall and replace current installation?"; then
                         continue
                     fi
                 fi
