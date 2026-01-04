@@ -2661,7 +2661,7 @@ main_menu() {
             
             # Read input with timeout
             local key
-            read -rsn1 -t 1 key < /dev/tty
+            read -rsn1 -t 10 key < /dev/tty
             local exit_code=$?
             
             if [ $exit_code -gt 128 ]; then
